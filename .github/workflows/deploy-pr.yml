@@ -8,6 +8,9 @@ env:
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
+    outputs:
+      # steps > id: meta の outputをこのjobのアウトプットとして扱う
+      tags: ${{ steps.meta.outputs.tags }}
     permissions:
       contents: read
       packages: write
@@ -32,3 +35,30 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+  update-manifest:
+    needs: build-and-push-image # このjobが終わってから実行される
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout ryo227-mtbs/kubernetes-basics # https://github.com/ryo227-mtbs/kubernetes-basics/blob/v2.0-rc/09-cicd/sample-app-manifests/deployment.yaml
+      uses: actions/checkout@v2
+      with:
+        repository: ryo227-mtbs/kubernetes-basics
+        ref: v2.0-rc # ブランチの指定
+    - name: Update manifest file
+      env:
+        YAML_PATH: 09-cicd/sample-app-manifests/deployment.yaml
+        CONTAINER_NAME: fastapi-sample
+        IMAGE_FULL_NAME: ${{ needs.build-and-push-image.outputs.tags }} # pull_request -> ghcr.io/nakamasato/fastapi-sample:pr-{pull-request-num}
+      run: |
+        yq e -i "(.spec.template.spec.containers[]|select(.name == \"${CONTAINER_NAME}\").image)|=\"${IMAGE_FULL_NAME}\"" ${YAML_PATH}
+        cat ${YAML_PATH}
+    - name: Create PR
+      uses: peter-evans/create-pull-request@v3
+      with:
+        token: ${{ secrets.REPO_GITHUB_TOKEN }}
+        title: "Update fastapi-sample" # プルリクのタイトル
+        base: v2.0-rc # ブランチ
+        draft: true # 下書きで作成
+        body: | # プルリクの中身？
+          # Changes
+          - update `fastapi-sample` images
